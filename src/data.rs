@@ -13,8 +13,10 @@ pub(crate) fn year_to_index(year: isize) -> Option<usize> {
     if year > DATA_MAX_YEAR {
         return None;
     }
+    // SAFETY: Bounds explicitly handled by above returns. `year`s in
+    // [DATA_MIN_YEAR, DATA_MAX_YEAR] range are ensured to be in YEAR_JUMP_TABLE
+    // by build.rs
     unsafe {
-        // SAFETY: Bounds explicitly checked above
         Some(*YEAR_JUMP_TABLE.get_unchecked((year - DATA_MIN_YEAR) as usize))
     }
 }

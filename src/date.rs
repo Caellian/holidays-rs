@@ -1,4 +1,5 @@
 use std::time::Duration;
+use crate::query::selection::CountrySelection;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
@@ -96,14 +97,21 @@ impl Date {
     }
 }
 
+/// An `isize` value is treated like a year in Julian calendar.
+impl From<isize> for Date {
+    fn from(value: isize) -> Self {
+        Date::from_year(value)
+    }
+}
+
 const SECONDS_IN_DAY: isize = 86400;
 
 impl TryFrom<Date> for std::time::SystemTime {
-    type Error = crate::Error;
+    type Error = DateConversionError;
 
     fn try_from(value: Date) -> Result<Self, Self::Error> {
         if value.0 > u64::MAX as isize / SECONDS_IN_DAY {
-            return Err(crate::Error::DateTooLarge);
+            return Err(DateConversionError);
         }
         assert!(
             value.0 <= u64::MAX as isize / SECONDS_IN_DAY,
@@ -127,31 +135,31 @@ impl From<std::time::SystemTime> for Date {
 
 #[cfg(feature = "chrono")]
 impl TryFrom<Date> for chrono::NaiveDate {
-    type Error = crate::Error;
+    type Error = DateConversionError;
 
     fn try_from(value: Date) -> Result<Self, Self::Error> {
         if value.0 > i32::MAX as isize - 719163 {
-            return Err(crate::Error::DateTooLarge);
+            return Err(DateConversionError);
         }
         chrono::NaiveDate::from_num_days_from_ce_opt(value.0 as i32 + 719163)
-            .ok_or(crate::Error::DateTooLarge)
+            .ok_or(DateConversionError)
     }
 }
 #[cfg(feature = "chrono")]
 impl TryFrom<Date> for chrono::DateTime<chrono::Utc> {
-    type Error = crate::Error;
+    type Error = DateConversionError;
 
     fn try_from(value: Date) -> Result<Self, Self::Error> {
         let naive = chrono::NaiveDate::try_from(value)?
             .and_hms_opt(0, 0, 0)
-            .ok_or(crate::Error::DateTooLarge)?;
+            .ok_or(DateConversionError)?;
 
         Ok(chrono::TimeZone::from_utc_datetime(&chrono::Utc, &naive))
     }
 }
 #[cfg(feature = "chrono")]
 impl TryFrom<Date> for chrono::DateTime<chrono::Local> {
-    type Error = crate::Error;
+    type Error = DateConversionError;
 
     #[inline]
     fn try_from(value: Date) -> Result<Self, Self::Error> {
@@ -183,6 +191,68 @@ impl From<chrono::DateTime<chrono::Local>> for Date {
     }
 }
 
+#[cfg(feature = "time")]
+impl TryFrom<Date> for time::Date {
+    type Error = DateConversionError;
+
+    fn try_from(value: Date) -> Result<Self, Self::Error> {
+        if value.0.abs() > i64::MAX as isize {
+            return Err(DateConversionError);
+        }
+
+        // `Date` days since 1970-01-01; time::Date::from_julian_day starts from -4713-11-24
+        let epoch = time::Date::from_calendar_date(1970, time::Month::January, 1)
+            .map_err(|_| DateConversionError)?;
+        Ok(epoch
+            .saturating_add(time::Duration::days(value.0 as i64)))
+    }
+}
+
+#[cfg(feature = "time")]
+impl TryFrom<Date> for time::OffsetDateTime {
+    type Error = DateConversionError;
+
+    fn try_from(value: Date) -> Result<Self, Self::Error> {
+        let date = time::Date::try_from(value)?;
+        let date = date.with_hms(0, 0, 0).unwrap();
+        Ok(date.assume_utc())
+    }
+}
+
+#[cfg(feature = "time")]
+impl TryFrom<Date> for time::PrimitiveDateTime {
+    type Error = DateConversionError;
+
+    fn try_from(value: Date) -> Result<Self, Self::Error> {
+        let date = time::Date::try_from(value)?;
+        let date = date.with_hms(0, 0, 0).unwrap();
+        Ok(date)
+    }
+}
+
+#[cfg(feature = "time")]
+impl From<time::Date> for Date {
+    fn from(value: time::Date) -> Self {
+        let epoch = time::Date::from_calendar_date(1970, time::Month::January, 1).unwrap();
+        let days = (value - epoch).whole_days();
+        Date(days as isize)
+    }
+}
+
+#[cfg(feature = "time")]
+impl From<time::OffsetDateTime> for Date {
+    fn from(value: time::OffsetDateTime) -> Self {
+        Date::from(value.date())
+    }
+}
+
+#[cfg(feature = "time")]
+impl From<time::PrimitiveDateTime> for Date {
+    fn from(value: time::PrimitiveDateTime) -> Self {
+        Date::from(value.date())
+    }
+}
+
 impl std::fmt::Debug for Date {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (y, m, d) = self.ymd();
@@ -190,16 +260,35 @@ impl std::fmt::Debug for Date {
     }
 }
 
+/// Utility functions that extend all supported date types and provide methods
+/// on them to directly query holiday information.
 pub trait DateExt: Into<Date> + Clone {
-    fn is_holiday(&self, country: crate::country::Country) -> bool {
-        crate::contains(country, self.clone())
+    // Most date(time) types are trivial to Clone
+
+    /// Returns an iterator of holidays that are observed on this date in
+    /// specified `country` (or many of them).
+    /// 
+    /// This is an alias for [`holiday::get`] method, see that method for more
+    /// details.
+    /// 
+    /// [`holiday::get`]: crate::get
+    fn holidays<CountryIter>(&self, country: impl Into<CountrySelection<CountryIter>>) -> crate::Iter
+    where
+        CountryIter: IntoIterator<Item = crate::Country>, {
+        crate::get(country, self.clone())
     }
 
-    fn is_holiday_in_any<C>(&self, countries: C) -> bool
+    /// Returns `true` if any holidays are observed on this date in specified
+    /// `country` (or many of them).
+    /// 
+    /// This is an alias for [`holiday::is_holiday`] method, see that method for
+    /// more details.
+    /// 
+    /// [`holiday::is_holiday`]: crate::is_holiday
+    fn is_holiday<CountryIter>(&self, country: impl Into<CountrySelection<CountryIter>>) -> bool
     where
-        C: IntoIterator<Item = crate::country::Country>,
-    {
-        crate::contains_in_many(countries, self.clone())
+        CountryIter: IntoIterator<Item = crate::Country> {
+        crate::is_holiday(country, self.clone())
     }
 }
 
@@ -211,3 +300,10 @@ impl DateExt for chrono::NaiveDate {}
 impl DateExt for chrono::DateTime<chrono::Utc> {}
 #[cfg(feature = "chrono")]
 impl DateExt for chrono::DateTime<chrono::Local> {}
+
+/// Error returned when conversion to/from another date format can't be
+/// performed because one has larger span than the other and conversion would
+/// cause an overflow.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[error("Date is too large for conversion")]
+pub struct DateConversionError;

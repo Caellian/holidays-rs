@@ -16,6 +16,7 @@ phf_shared = "0.12"
 phf = { version = "0.12", features = ["macros"] }
 
 chrono = { version = "0.4", optional = true }
+time = { version = "0.3", optional = true }
 
 [build-dependencies]
 phf = { version = "0.12", default-features = false }
@@ -23,15 +24,13 @@ phf_codegen = "0.12"
 phf_shared = "0.12"
 csv = "1.3"
 
-[dev-dependencies]
-anyhow = "1"
-serial_test = "0.10"
-
 [features]
-default = ["all-countries", "chrono"]
+default = ["all-countries", "chrono", "time"]
 
 chrono = ["dep:chrono"]
+time = ["dep:time"]
 
+# Must be last
 all-countries = [
   "AE",
   "AM",

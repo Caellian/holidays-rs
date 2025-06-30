@@ -142,11 +142,23 @@ fn gen_country_enum_decl<'a, W: Write, C: Iterator<Item = &'a Country>>(
     out: &mut W,
     countries: C,
 ) -> std::io::Result<()> {
+    let mut reverse_lookup = phf_codegen::Map::<&str>::new();
+
     out.write_all(b"declare_countries![\n")?;
     for c in countries {
         writeln!(out, "{0}: \"{0}\" \"{1}\" {2},", c.code, c.name, c.index)?;
+        reverse_lookup.entry(&c.code, format!("Country::{}", c.code));
     }
-    out.write_all(b"];")?;
+    out.write_all(b"];\n")?;
+
+    write!(
+        out,
+        "pub(crate) static CODE_TO_COUNTRY: phf::Map<&'static str, Country> = {}",
+        reverse_lookup.build()
+    )
+    .unwrap();
+    writeln!(out, ";").unwrap();
+
     Ok(())
 }
 

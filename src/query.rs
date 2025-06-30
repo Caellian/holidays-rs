@@ -1,14 +1,19 @@
 use crate::country::{Country, CountrySet, CountrySetHolidayIter};
 use crate::{date::Date, Holiday};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub struct Query {
     countries: CountrySet,
     date_filter: Option<DateQuery>,
 }
 
 impl Query {
-    pub fn country(value: Country) -> Self {
+    pub const EMPTY: Query = Query {
+        countries: CountrySet::new(),
+        date_filter: None,
+    };
+
+    pub const fn country(value: Country) -> Self {
         Query {
             countries: {
                 let mut countries = CountrySet::new();
@@ -33,7 +38,7 @@ impl Query {
         }
     }
 
-    pub fn year(value: isize) -> Self {
+    pub const fn year(value: isize) -> Self {
         Query {
             countries: CountrySet::new(),
             date_filter: Some(DateQuery::year(value)),
@@ -76,19 +81,19 @@ impl Query {
         self
     }
 
-    pub(crate) fn run(&self) -> Iter {
-        match self.date_filter {
-            Some(empty) if empty.is_empty() => Iter::Empty,
-            Some(DateQuery::Exact(date)) => Iter::Exact(IterExact {
+    pub fn run(&self) -> Iter {
+        Iter(match self.date_filter {
+            Some(empty) if empty.is_empty() => IterImpl::Empty,
+            Some(DateQuery::Exact(date)) => IterImpl::Exact {
                 inner: self.countries.iter(),
                 date,
-            }),
-            Some(date_query) => Iter::DateRange(IterDateRange {
+            },
+            Some(date_query) => IterImpl::DateRange {
                 range: date_query.as_data_range(),
                 countries: self.countries,
-            }),
-            None => Iter::NoDate(self.countries.holidays()),
-        }
+            },
+            None => IterImpl::NoDate(self.countries.holidays()),
+        })
     }
 }
 
@@ -112,7 +117,7 @@ impl std::ops::BitAndAssign for Query {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum DateQuery {
     FromDate(Date),
     ToDate(Date),
@@ -124,7 +129,7 @@ impl DateQuery {
     const EMPTY: DateQuery = DateQuery::DateRange(Date(0), Date(0));
 
     #[inline(always)]
-    fn year(value: isize) -> Self {
+    const fn year(value: isize) -> Self {
         DateQuery::DateRange(Date::from_year(value), Date::from_year(value + 1))
     }
 
@@ -341,48 +346,147 @@ impl std::ops::BitAnd for DateQuery {
     }
 }
 
-mod detail {
-    use super::*;
-    pub struct IterExact {
-        pub(super) inner: crate::country::CountrySetIter,
-        pub(super) date: Date,
-    }
-
-    pub struct IterDateRange {
-        pub(super) range: std::ops::Range<usize>,
-        pub(super) countries: CountrySet,
-    }
-}
-use detail::*;
-
-/// Iterator over holiday query results.
-pub enum Iter {
+enum IterImpl {
     Empty,
-    Exact(IterExact),
-    DateRange(IterDateRange),
+    Exact {
+        inner: crate::country::CountrySetIter,
+        date: Date,
+    },
+    DateRange {
+        range: std::ops::Range<usize>,
+        countries: CountrySet,
+    },
     NoDate(CountrySetHolidayIter),
 }
+
+/// Iterator over holiday query results.
+pub struct Iter(IterImpl);
 
 impl Iterator for Iter {
     type Item = &'static Holiday;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Iter::Empty => None,
-            Iter::Exact(IterExact { inner, date }) => loop {
+        match &mut self.0 {
+            IterImpl::Empty => None,
+            IterImpl::Exact { inner, date } => loop {
                 let next = inner.next()?;
                 if let Some(it) = crate::data::country_date_to_holiday(next, *date) {
                     return Some(it);
                 }
             },
-            Iter::DateRange(IterDateRange { range, countries }) => loop {
+            IterImpl::DateRange { range, countries } => loop {
                 let i = range.next()?;
                 let result = &crate::data::DATA[i];
                 if countries.contains(result.code) {
                     return Some(result);
                 }
             },
-            Iter::NoDate(inner) => inner.next(),
+            IterImpl::NoDate(inner) => inner.next(),
+        }
+    }
+}
+
+pub mod selection {
+    use super::*;
+
+    pub enum CountrySelection<I>
+    where
+        I: IntoIterator<Item = Country>,
+    {
+        None,
+        One(Country),
+        Many(I),
+    }
+
+    impl<I> CountrySelection<I>
+    where
+        I: IntoIterator<Item = Country>,
+    {
+        pub fn into_query(self) -> Query {
+            match self {
+                CountrySelection::None => Query::EMPTY,
+                CountrySelection::One(one) => Query::country(one),
+                CountrySelection::Many(many) => Query::countries(many),
+            }
+        }
+    }
+
+    impl From<Option<Country>> for CountrySelection<std::iter::Empty<Country>> {
+        fn from(value: Option<Country>) -> Self {
+            match value {
+                Some(it) => CountrySelection::One(it),
+                None => CountrySelection::None,
+            }
+        }
+    }
+
+    impl From<Country> for CountrySelection<std::iter::Empty<Country>> {
+        fn from(value: Country) -> Self {
+            CountrySelection::One(value)
+        }
+    }
+
+    impl<I> From<I> for CountrySelection<I>
+    where
+        I: IntoIterator<Item = Country>,
+    {
+        fn from(value: I) -> Self {
+            CountrySelection::Many(value)
+        }
+    }
+
+    pub enum DateSelection<D, R>
+    where
+        D: Into<Date>,
+        R: std::ops::RangeBounds<D>,
+    {
+        None,
+        One(D),
+        Range(R),
+    }
+
+    impl<D, R> DateSelection<D, R>
+    where
+        D: Into<Date> + Clone,
+        R: std::ops::RangeBounds<D>,
+    {
+        pub fn into_query(self) -> Query {
+            match self {
+                DateSelection::None => Query::EMPTY,
+                DateSelection::One(one) => Query::date(one),
+                DateSelection::Range(range) => Query::date_range(range),
+            }
+        }
+    }
+
+    impl<D> From<Option<D>> for DateSelection<D, std::ops::Range<D>>
+    where
+        D: Into<Date>,
+    {
+        fn from(value: Option<D>) -> Self {
+            match value {
+                Some(it) => DateSelection::One(it),
+                None => DateSelection::None,
+            }
+        }
+    }
+
+    impl<D> From<D> for DateSelection<D, std::ops::Range<D>>
+    where
+        D: Into<Date>,
+    {
+        fn from(value: D) -> Self {
+            DateSelection::One(value)
+        }
+    }
+
+    impl<D, R> From<R> for DateSelection<D, R>
+    where
+        D: Into<Date> + Clone,
+        R: std::ops::RangeBounds<D>,
+    {
+        fn from(value: R) -> Self {
+            DateSelection::Range(value)
         }
     }
 }
