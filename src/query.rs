@@ -26,7 +26,8 @@ impl Query {
 
     pub fn countries<I>(value: I) -> Self
     where
-        I: IntoIterator<Item = Country>,
+        I: IntoIterator,
+        I::Item: Into<Country>
     {
         Query {
             countries: {
@@ -389,9 +390,13 @@ impl Iterator for Iter {
 pub mod selection {
     use super::*;
 
+    /// Selection qualifier that makes the query ignore a certain axis.
+    pub struct Any;
+
     pub enum CountrySelection<I>
     where
-        I: IntoIterator<Item = Country>,
+        I: IntoIterator,
+        I::Item: Into<Country>,
     {
         None,
         One(Country),
@@ -400,7 +405,8 @@ pub mod selection {
 
     impl<I> CountrySelection<I>
     where
-        I: IntoIterator<Item = Country>,
+        I: IntoIterator,
+        I::Item: Into<Country>,
     {
         pub fn into_query(self) -> Query {
             match self {
@@ -411,12 +417,9 @@ pub mod selection {
         }
     }
 
-    impl From<Option<Country>> for CountrySelection<std::iter::Empty<Country>> {
-        fn from(value: Option<Country>) -> Self {
-            match value {
-                Some(it) => CountrySelection::One(it),
-                None => CountrySelection::None,
-            }
+    impl From<Any> for CountrySelection<std::iter::Empty<Country>> {
+        fn from(_: Any) -> Self {
+            CountrySelection::None
         }
     }
 
@@ -426,9 +429,11 @@ pub mod selection {
         }
     }
 
+    // `Option` is an iterator as well
     impl<I> From<I> for CountrySelection<I>
     where
-        I: IntoIterator<Item = Country>,
+        I: IntoIterator,
+        I::Item: Into<Country>,
     {
         fn from(value: I) -> Self {
             CountrySelection::Many(value)
@@ -456,6 +461,15 @@ pub mod selection {
                 DateSelection::One(one) => Query::date(one),
                 DateSelection::Range(range) => Query::date_range(range),
             }
+        }
+    }
+
+    impl<D> From<Any> for DateSelection<D, std::ops::Range<D>>
+    where
+        D: Into<Date>,
+    {
+        fn from(_: Any) -> Self {
+            DateSelection::None
         }
     }
 

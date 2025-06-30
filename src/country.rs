@@ -60,6 +60,13 @@ impl std::fmt::Display for Country {
     }
 }
 
+impl From<&Country> for Country {
+    #[inline(always)]
+    fn from(value: &Country) -> Self {
+        *value
+    }
+}
+
 impl AsRef<str> for Country {
     fn as_ref(&self) -> &str {
         // SAFETY: Code lookup table is of identical size as country enum
@@ -110,10 +117,11 @@ impl CountrySet {
     /// Extend from any iterator of countries.
     pub fn extend<I>(&mut self, iter: I)
     where
-        I: IntoIterator<Item = Country>,
+        I: IntoIterator,
+        I::Item: Into<Country>,
     {
         for c in iter {
-            self.insert(c);
+            self.insert(c.into());
         }
     }
 

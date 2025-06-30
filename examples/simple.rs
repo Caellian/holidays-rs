@@ -8,5 +8,5 @@ fn main() {
         holidays::is_holiday(Country::JP, d)
     );
 
-    println!("{:?}", holidays::get(Country::JP, d).next().unwrap());
+    println!("{:?}", holidays::get_holidays(Country::JP, d).next().unwrap());
 }

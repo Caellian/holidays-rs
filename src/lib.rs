@@ -80,6 +80,7 @@ use query::selection::*;
 pub use country::Country;
 pub use date::DateExt;
 pub use query::Iter;
+pub use query::selection::Any;
 
 /// Represents a holiday with an associated country, date, and name.
 #[derive(Debug, Clone, Copy)]
@@ -142,12 +143,13 @@ impl Holiday {
 /// [`SystemTime`]: std::time::SystemTime
 /// [range]: std::ops::RangeBounds
 /// [`RangeBounds<DateLike>`]: std::ops::RangeBounds
-pub fn get<CountryIter, DateLike, DateRange>(
+pub fn get_holidays<CountryIter, DateLike, DateRange>(
     countries: impl Into<CountrySelection<CountryIter>>,
     date: impl Into<DateSelection<DateLike, DateRange>>,
 ) -> query::Iter
 where
-    CountryIter: IntoIterator<Item = Country>,
+    CountryIter: IntoIterator,
+    CountryIter::Item: Into<crate::Country>,
     DateLike: Into<Date> + Clone,
     DateRange: std::ops::RangeBounds<DateLike>,
 {
@@ -158,18 +160,19 @@ where
 
 /// Returns `true` if any holidays are observed in specified countries and date.
 /// 
-/// See [`get`] function for details on supported arguments.
+/// See [`get_holidays`] function for details on supported arguments.
 #[inline]
 pub fn is_holiday<CountryIter, DateLike, DateRange>(
     countries: impl Into<CountrySelection<CountryIter>>,
     date: impl Into<DateSelection<DateLike, DateRange>>,
 ) -> bool
 where
-    CountryIter: IntoIterator<Item = Country>,
+    CountryIter: IntoIterator,
+    CountryIter::Item: Into<crate::Country>,
     DateLike: Into<Date> + Clone,
     DateRange: std::ops::RangeBounds<DateLike>,
 {
-    get(countries, date).next().is_some()
+    get_holidays(countries, date).next().is_some()
 }
 
 /// Error types returned from the crate.

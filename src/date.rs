@@ -1,5 +1,5 @@
+use crate::query::selection::*;
 use std::time::Duration;
-use crate::query::selection::CountrySelection;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
@@ -203,8 +203,7 @@ impl TryFrom<Date> for time::Date {
         // `Date` days since 1970-01-01; time::Date::from_julian_day starts from -4713-11-24
         let epoch = time::Date::from_calendar_date(1970, time::Month::January, 1)
             .map_err(|_| DateConversionError)?;
-        Ok(epoch
-            .saturating_add(time::Duration::days(value.0 as i64)))
+        Ok(epoch.saturating_add(time::Duration::days(value.0 as i64)))
     }
 }
 
@@ -262,44 +261,69 @@ impl std::fmt::Debug for Date {
 
 /// Utility functions that extend all supported date types and provide methods
 /// on them to directly query holiday information.
-pub trait DateExt: Into<Date> + Clone {
+pub trait DateExt<DateLike, DateRange = std::ops::Range<DateLike>>:
+    Into<DateSelection<DateLike, DateRange>> + Clone
+where
+    DateLike: Into<Date> + Clone,
+    DateRange: std::ops::RangeBounds<DateLike>,
+{
     // Most date(time) types are trivial to Clone
 
-    /// Returns an iterator of holidays that are observed on this date in
-    /// specified `country` (or many of them).
-    /// 
-    /// This is an alias for [`holiday::get`] method, see that method for more
+    /// Returns an iterator of holidays that are observed on this date (range)
+    /// in specified `countries`.
+    ///
+    /// This is an alias for [`get_holidays`] method, see that method for more
     /// details.
-    /// 
-    /// [`holiday::get`]: crate::get
-    fn holidays<CountryIter>(&self, country: impl Into<CountrySelection<CountryIter>>) -> crate::Iter
+    ///
+    /// [`get_holidays`]: crate::get_holidays
+    fn holidays<CountryIter>(
+        &self,
+        countries: impl Into<CountrySelection<CountryIter>>,
+    ) -> crate::Iter
     where
-        CountryIter: IntoIterator<Item = crate::Country>, {
-        crate::get(country, self.clone())
+        CountryIter: IntoIterator,
+        CountryIter::Item: Into<crate::Country>,
+    {
+        crate::get_holidays(countries, self.clone())
     }
 
-    /// Returns `true` if any holidays are observed on this date in specified
-    /// `country` (or many of them).
-    /// 
-    /// This is an alias for [`holiday::is_holiday`] method, see that method for
-    /// more details.
-    /// 
-    /// [`holiday::is_holiday`]: crate::is_holiday
-    fn is_holiday<CountryIter>(&self, country: impl Into<CountrySelection<CountryIter>>) -> bool
+    /// Returns `true` if any holidays are observed on this date (range) in
+    /// specified `countries`.
+    ///
+    /// This is an alias for [`is_holiday`] method, see that method for more
+    /// details.
+    ///
+    /// [`is_holiday`]: crate::is_holiday
+    fn is_holiday<CountryIter>(&self, countries: impl Into<CountrySelection<CountryIter>>) -> bool
     where
-        CountryIter: IntoIterator<Item = crate::Country> {
-        crate::is_holiday(country, self.clone())
+        CountryIter: IntoIterator,
+        CountryIter::Item: Into<crate::Country>,
+    {
+        crate::is_holiday(countries, self.clone())
     }
 }
 
-impl DateExt for std::time::SystemTime {}
-
-#[cfg(feature = "chrono")]
-impl DateExt for chrono::NaiveDate {}
-#[cfg(feature = "chrono")]
-impl DateExt for chrono::DateTime<chrono::Utc> {}
-#[cfg(feature = "chrono")]
-impl DateExt for chrono::DateTime<chrono::Local> {}
+macro_rules! impl_ext_for_t {
+    (if $guard: literal $($param: tt)*) => {
+        #[cfg(feature = $guard)]
+        impl DateExt<$($param)*> for $($param)* {}
+        #[cfg(feature = $guard)]
+        impl<R> DateExt<$($param)*, R> for R where
+            R: std::ops::RangeBounds<$($param)*> + Clone {}
+    };
+    ($($param: tt)*) => {
+        impl DateExt<$($param)*> for $($param)* {}
+        impl<R> DateExt<$($param)*, R> for R where
+            R: std::ops::RangeBounds<$($param)*> + Clone {}
+    };
+}
+impl_ext_for_t!(std::time::SystemTime);
+impl_ext_for_t!(if "chrono" chrono::NaiveDate);
+impl_ext_for_t!(if "chrono" chrono::DateTime<chrono::Utc>);
+impl_ext_for_t!(if "chrono" chrono::DateTime<chrono::Local>);
+impl_ext_for_t!(if "time" time::Date);
+impl_ext_for_t!(if "time" time::OffsetDateTime);
+impl_ext_for_t!(if "time" time::PrimitiveDateTime);
 
 /// Error returned when conversion to/from another date format can't be
 /// performed because one has larger span than the other and conversion would
@@ -307,3 +331,45 @@ impl DateExt for chrono::DateTime<chrono::Local> {}
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 #[error("Date is too large for conversion")]
 pub struct DateConversionError;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Country;
+    use std::time::SystemTime;
+
+    #[test]
+    fn date_ext_type_interface() {
+        // This test pins down type interface requirements of DateExt.
+        // It's failing if it doesn't compile.
+
+        let time = SystemTime::now();
+
+        let country_opt: Option<Country> = None;
+
+        let _ = time.holidays(Any);
+        let _ = time.holidays(country_opt);
+        let _ = time.holidays(Country::US);
+        let _ = time.holidays(&[Country::US, Country::JP]);
+        let _ = time.holidays([Country::US, Country::JP]);
+        let _ = time.holidays(vec![Country::DE, Country::HR]);
+
+        let time_ref = &time;
+
+        let _ = time_ref.holidays(Any);
+        let _ = time_ref.holidays(country_opt);
+        let _ = time_ref.holidays(Country::US);
+        let _ = time_ref.holidays(&[Country::US, Country::JP]);
+        let _ = time_ref.holidays([Country::US, Country::JP]);
+        let _ = time_ref.holidays(vec![Country::DE, Country::HR]);
+
+        let time_range = time..time;
+
+        let _ = time_range.holidays(Any);
+        let _ = time_range.holidays(country_opt);
+        let _ = time_range.holidays(Country::US);
+        let _ = time_range.holidays(&[Country::US, Country::JP]);
+        let _ = time_range.holidays([Country::US, Country::JP]);
+        let _ = time_range.holidays(vec![Country::DE, Country::HR]);
+    }
+}
