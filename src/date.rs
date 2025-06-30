@@ -328,9 +328,12 @@ impl_ext_for_t!(if "time" time::PrimitiveDateTime);
 /// Error returned when conversion to/from another date format can't be
 /// performed because one has larger span than the other and conversion would
 /// cause an overflow.
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-#[error("Date is too large for conversion")]
+/// 
+/// In most practical use cases this won't happen because dates that are stored
+/// in holidays table can be reasonably converted to most time libraries.
+#[derive(Debug, PartialEq, Eq)]
 pub struct DateConversionError;
+crate::error::error_msg!(DateConversionError, "Date is too large for conversion");
 
 #[cfg(test)]
 mod tests {

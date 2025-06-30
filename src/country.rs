@@ -4,7 +4,7 @@ use crate::Holiday;
 
 macro_rules! declare_countries {
     ($($code: ident: $str_code: literal $name: literal $val:literal),* $(,)?) => {
-        /// Two-letter country codes as specified by ISO 3166-1 alpha-2.
+        /// Two-letter country code as specified by ISO 3166-1 alpha-2.
         #[allow(dead_code)]
         #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
         #[repr(u16)]
@@ -183,7 +183,7 @@ impl std::ops::BitAndAssign for CountrySet {
     }
 }
 
-
+#[derive(Clone, Copy)]
 pub(crate) struct CountrySetIter {
     words: [u64; N_WORDS],
     word_idx: usize,
@@ -231,6 +231,7 @@ impl Iterator for CountrySetIter {
 }
 
 /// An iterator over merged holiday indices from multiple country jump tables.
+#[derive(Clone)]
 pub struct CountrySetHolidayIter {
     // Min‑heap of (value, which iterator)
     heap: std::collections::BinaryHeap<Reverse<(usize, usize)>>,
@@ -254,6 +255,6 @@ impl Iterator for CountrySetHolidayIter {
 }
 
 /// Error returned when attempting to parse unknown country code.
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-#[error("Unknown country code")]
+#[derive(Debug, PartialEq, Eq)]
 pub struct CountryParseError;
+crate::error::error_msg!(CountryParseError, "Unknown country code");

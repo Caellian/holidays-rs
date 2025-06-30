@@ -2,7 +2,7 @@ use crate::country::{Country, CountrySet, CountrySetHolidayIter};
 use crate::{date::Date, Holiday};
 
 #[derive(Clone, Copy)]
-pub struct Query {
+pub(crate) struct Query {
     countries: CountrySet,
     date_filter: Option<DateQuery>,
 }
@@ -27,7 +27,7 @@ impl Query {
     pub fn countries<I>(value: I) -> Self
     where
         I: IntoIterator,
-        I::Item: Into<Country>
+        I::Item: Into<Country>,
     {
         Query {
             countries: {
@@ -39,6 +39,7 @@ impl Query {
         }
     }
 
+    #[allow(dead_code)]
     pub const fn year(value: isize) -> Self {
         Query {
             countries: CountrySet::new(),
@@ -46,6 +47,7 @@ impl Query {
         }
     }
 
+    #[allow(dead_code)]
     pub fn year_range<R: std::ops::RangeBounds<isize>>(value: R) -> Self {
         Query {
             countries: CountrySet::new(),
@@ -129,11 +131,13 @@ enum DateQuery {
 impl DateQuery {
     const EMPTY: DateQuery = DateQuery::DateRange(Date(0), Date(0));
 
+    #[allow(dead_code)]
     #[inline(always)]
     const fn year(value: isize) -> Self {
         DateQuery::DateRange(Date::from_year(value), Date::from_year(value + 1))
     }
 
+    #[allow(dead_code)]
     #[inline(always)]
     fn year_range<R>(value: R) -> Option<Self>
     where
@@ -347,6 +351,7 @@ impl std::ops::BitAnd for DateQuery {
     }
 }
 
+#[derive(Clone)]
 enum IterImpl {
     Empty,
     Exact {
@@ -361,6 +366,7 @@ enum IterImpl {
 }
 
 /// Iterator over holiday query results.
+#[derive(Clone)]
 pub struct Iter(IterImpl);
 
 impl Iterator for Iter {
@@ -387,6 +393,63 @@ impl Iterator for Iter {
     }
 }
 
+#[derive(Clone)]
+enum BoundsResultImpl<I>
+where
+    I: Iterator,
+    I::Item: Into<Country>,
+{
+    Empty,
+    One(Country),
+    Many(I),
+}
+#[derive(Clone)]
+pub(crate) struct BoundsResult<I>(BoundsResultImpl<I>)
+where
+    I: Iterator,
+    I::Item: Into<Country>;
+
+impl<I> Iterator for BoundsResult<I>
+where
+    I: Iterator,
+    I::Item: Into<Country>,
+{
+    type Item = (Country, Option<(&'static Holiday, &'static Holiday)>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let next = match &mut self.0 {
+            BoundsResultImpl::Empty => return None,
+            BoundsResultImpl::One(country) => {
+                let value = *country;
+                self.0 = BoundsResultImpl::Empty;
+                value
+            }
+            BoundsResultImpl::Many(inner) => inner.next().map(|it| it.into())?,
+        };
+
+        let indices = crate::data::COUNTRY_JUMP_TABLE[next as usize];
+        let bounds = indices.first().map(|it| {
+            let min = it;
+            // SAFETY: If first value exists, as guaranteed by `map`, then last
+            // value must exist as well and be either the same value or some
+            // later one in the slice.
+            let max = unsafe { indices.last().unwrap_unchecked() };
+
+            // SAFETY: Every index stored in `COUNTRY_JUMP_TABLE` is a valid index into `DATA`
+            let (min, max) = unsafe {
+                (
+                    crate::data::DATA.get_unchecked(*min),
+                    crate::data::DATA.get_unchecked(*max),
+                )
+            };
+
+            (min, max)
+        });
+
+        Some((next, bounds))
+    }
+}
+
 pub mod selection {
     use super::*;
 
@@ -408,12 +471,20 @@ pub mod selection {
         I: IntoIterator,
         I::Item: Into<Country>,
     {
-        pub fn into_query(self) -> Query {
+        pub(crate) fn into_query(self) -> Query {
             match self {
                 CountrySelection::None => Query::EMPTY,
                 CountrySelection::One(one) => Query::country(one),
                 CountrySelection::Many(many) => Query::countries(many),
             }
+        }
+
+        pub(crate) fn bounds(self) -> BoundsResult<I::IntoIter> {
+            BoundsResult(match self {
+                CountrySelection::None => BoundsResultImpl::Empty,
+                CountrySelection::One(country) => BoundsResultImpl::One(country),
+                CountrySelection::Many(countries) => BoundsResultImpl::Many(countries.into_iter()),
+            })
         }
     }
 
@@ -455,7 +526,7 @@ pub mod selection {
         D: Into<Date> + Clone,
         R: std::ops::RangeBounds<D>,
     {
-        pub fn into_query(self) -> Query {
+        pub(crate) fn into_query(self) -> Query {
             match self {
                 DateSelection::None => Query::EMPTY,
                 DateSelection::One(one) => Query::date(one),

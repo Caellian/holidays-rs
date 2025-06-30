@@ -5,7 +5,7 @@
 //!
 //! Holiday data is sourced from python
 //! [`holidays`](https://pypi.org/project/holidays) library.
-//! 
+//!
 //! Holiday data is embedded in the binary using [`phf`](https://docs.rs/phf),
 //! enabling fast lookups without runtime data loading. Querying is designed to
 //! be ergonomic yet powerful, supporting a wide range of inputs such as single
@@ -79,8 +79,8 @@ use query::selection::*;
 
 pub use country::Country;
 pub use date::DateExt;
-pub use query::Iter;
 pub use query::selection::Any;
+pub use query::Iter;
 
 /// Represents a holiday with an associated country, date, and name.
 #[derive(Debug, Clone, Copy)]
@@ -103,7 +103,8 @@ impl Holiday {
     }
 }
 
-/// Queries holidays by countries and date selection.
+/// Queries holidays by countries and date selection and returns an iterator
+/// over matching holiday records.
 ///
 /// # Parameters
 /// - `countries`: A value that represents a country selection. It can be:
@@ -134,10 +135,6 @@ impl Holiday {
 ///
 /// In most cases these type parameters can be automatically inferred from
 /// provided arguments and don't need to be explicitly specified.
-/// 
-/// # Returns
-///
-/// An iterator over matching holiday records.
 ///
 /// [iterable]: std::iter::IntoIterator
 /// [`SystemTime`]: std::time::SystemTime
@@ -159,7 +156,7 @@ where
 }
 
 /// Returns `true` if any holidays are observed in specified countries and date.
-/// 
+///
 /// See [`get_holidays`] function for details on supported arguments.
 #[inline]
 pub fn is_holiday<CountryIter, DateLike, DateRange>(
@@ -175,8 +172,43 @@ where
     get_holidays(countries, date).next().is_some()
 }
 
+/// Returns an iterator that provides dates of first and last event for all
+/// given `countries` in requested `DateFormat`.
+/// 
+/// # Panics
+/// 
+/// Returned iterator will panic if requested `DateFormat` can't represent date
+/// of first or last event for some country.
+pub fn get_bounding_entries<DateFormat, CountryIter>(
+    countries: impl Into<CountrySelection<CountryIter>>,
+) -> impl Iterator<Item = (Country, Option<(DateFormat, DateFormat)>)>
+where
+    DateFormat: TryFrom<Date, Error = DateConversionError>,
+    CountryIter: IntoIterator,
+    CountryIter::Item: Into<crate::Country>,
+{
+    countries.into().bounds().map(|(country, bounds)| {
+        (
+            country,
+            bounds.map(|(min, max)| (min.date().unwrap(), max.date().unwrap())),
+        )
+    })
+}
+
 /// Error types returned from the crate.
 pub mod error {
     pub use crate::country::CountryParseError;
     pub use crate::date::DateConversionError;
+
+    macro_rules! error_msg {
+        ($err: ty, $message: literal $(, $($arg: tt),+)?) => {
+            impl std::fmt::Display for $err {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    write!(f, $message $(, $(self.$arg),+)?)
+                }
+            }
+            impl core::error::Error for $err {}
+        };
+    }
+    pub(crate) use error_msg;
 }
