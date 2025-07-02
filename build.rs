@@ -40,24 +40,19 @@ struct Date {
     day_index: isize,
 }
 
-pub const fn ymd_as_isize(y: isize, m: isize, d: isize) -> isize {
-    // Source: https://howardhinnant.github.io/date_algorithms.html
-    let adjusted_year = y - if m <= 2 { 1 } else { 0 };
+pub const fn ymd_as_isize(mut y: isize, m: isize, d: isize) -> isize {
+    // Source: https://howardhinnant.github.io/date_algorithms.html#days_from_civil
+    if m <= 2 {
+        y -= 1
+    }
 
-    let era = if adjusted_year >= 0 {
-        adjusted_year / 400
-    } else {
-        (adjusted_year - 399) / 400
-    };
+    let era: isize = y.div_euclid(400);
+    let year_of_era = (y - era * 400) as u32;
+    let day_of_year = ((153 * ((m + 9) % 12) + 2) / 5 + d - 1) as u32;
+    let day_of_era =
+        year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
 
-    let year_of_era = adjusted_year - era * 400;
-    let month_part = if m > 2 { m - 3 } else { m + 9 };
-    let day_of_year = (153 * month_part + 2) / 5 + d - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-
-    let days_since_julian = era * 146097 + day_of_era;
-
-    days_since_julian - 719163
+    era * 146097 + (day_of_era as isize) - 719468
 }
 
 impl Date {}

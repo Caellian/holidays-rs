@@ -25,17 +25,19 @@
 //!
 //! # Example
 //!
-//! ```rust
+//! ```
+//! # use holidays::internal::Date;
 //! use holidays::Country;
 //!
-//! let holidays: Vec<_> = holidays::get(
+//! let holidays: Vec<_> = holidays::get_holidays(
 //!     [Country::US, Country::GB], // multiple countries
 //!     2025..=2026,                // year range
 //! ).collect();
 //!
 //! for holiday in holidays {
 //!     let time: std::time::SystemTime = holiday.date().unwrap();
-//!     println!("{} on {}", holiday.name, holiday.date::<SystemTime>().unwrap());
+//! #   let time = holiday.date::<Date>().unwrap();
+//!     println!("{} on {:?}", holiday.name, time); // pretending time implements Debug
 //! }
 //! ```
 //!
@@ -83,7 +85,7 @@ pub use query::selection::Any;
 pub use query::Iter;
 
 /// Represents a holiday with an associated country, date, and name.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Holiday {
     /// The `Country` this holiday is observed in.
     pub code: Country,
@@ -97,9 +99,13 @@ impl Holiday {
     /// Returns the date of the holiday in specified format.
     pub fn date<D>(&self) -> Result<D, DateConversionError>
     where
-        D: TryFrom<Date, Error = DateConversionError>,
+        D: TryFrom<Date>,
     {
-        <D as TryFrom<Date>>::try_from(self.date)
+        // TryFrom<T> is implemented for all From<T> and error type is
+        // Infallible; to unify both conversions error is mapped to
+        // DateConversionError. Once specialization is supported, this can be
+        // cleaned up.
+        <D as TryFrom<Date>>::try_from(self.date).map_err(|_| DateConversionError)
     }
 }
 
@@ -108,12 +114,14 @@ impl Holiday {
 ///
 /// # Parameters
 /// - `countries`: A value that represents a country selection. It can be:
-///   - [`None`] to query all countries,
+///   - [`Any`] to query all countries,
+///   - [`Option`] acts as [`Any`] if `None`,
 ///   - a single [`Country`], or
 ///   - any [iterable] container of [`Country`]s (an array, slice, [`Vec`],
 ///     etc.).
 /// - `date`: A value that represents a date range. It can be:
-///   - [`None`] to query all available dates,
+///   - [`Any`] to query all available dates,
+///   - [`Option`] acts as [`Any`] if `None`,
 ///   - a single date, or
 ///   - a [range] of dates.
 ///
@@ -135,7 +143,43 @@ impl Holiday {
 ///
 /// In most cases these type parameters can be automatically inferred from
 /// provided arguments and don't need to be explicitly specified.
+/// 
+/// # Examples
 ///
+/// To query information about a single country and single date, do dis:
+/// ```
+/// # use holidays::internal::Date;
+/// use holidays::Country;
+///
+/// let mut holidays = holidays::get_holidays(Country::US, Date::from_ymd(2025, 7, 4));
+/// let holiday = holidays.next().expect("missing data");
+/// 
+/// assert_eq!(holiday.name, "Independence Day");
+/// ```
+/// 
+/// Year ranges can be used to query holidays over a lot o' years:
+/// ```
+/// use holidays::Country;
+///
+/// let mut holidays = holidays::get_holidays(Country::JP, 2025..=2026);
+/// let observed_holidays = holidays.count();
+/// 
+/// assert_eq!(observed_holidays, 19);
+/// ```
+/// 
+/// Multiple countries can be queried by providing an iterable in place of a single country:
+/// ```
+/// # use holidays::internal::Date;
+/// use holidays::Country;
+///
+/// let mut holidays = holidays::get_holidays(&[Country::JP, Country::US], Date::from_ymd(2025, 9, 23));
+/// let holiday = holidays.next().unwrap();
+/// 
+/// assert_eq!(holiday.name, "Autumnal Equinox");
+/// // Autumnal Equinox isn't observed in US.
+/// assert_eq!(holidays.next(), None);
+/// ```
+/// 
 /// [iterable]: std::iter::IntoIterator
 /// [`SystemTime`]: std::time::SystemTime
 /// [range]: std::ops::RangeBounds
@@ -211,4 +255,11 @@ pub mod error {
         };
     }
     pub(crate) use error_msg;
+}
+
+/// This module provides direct access to internals that aren't part of public
+/// API and can change at any time without affecting semver.
+#[doc(hidden)]
+pub mod internal {
+    pub use crate::date::Date;
 }

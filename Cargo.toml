@@ -24,7 +24,7 @@ phf_shared = "0.12"
 csv = "1.3"
 
 [features]
-default = ["all-countries", "chrono", "time"]
+default = ["all-countries"]
 
 chrono = ["dep:chrono"]
 time = ["dep:time"]

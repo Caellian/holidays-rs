@@ -1,37 +1,73 @@
 use crate::query::selection::*;
 use std::time::Duration;
 
+/// Internal date representation.
+///
+/// This type is not part of public API and only serves as an intermediate
+/// representation of a date for this crate.
+///
+/// It can change at any time without affecting the semver and shouldn't be
+/// used outside the library.
+///
+/// Smallest representable date: -25252734927764585-06-07
+/// Largest representable date:   25252734927766554-09-25
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct Date(
-    /// Days since 1st of January, 1970. (UNIX epoch)
+    /// Number of days since 1st of January, 1970. (UNIX epoch).
     pub(crate) isize,
 );
 
+#[allow(missing_docs)]
 impl Date {
-    pub const fn from_ymd(year: isize, month: usize, day: usize) -> Self {
-        // Source: https://howardhinnant.github.io/date_algorithms.html
+    const YEAR_DAYS: u32 = 365;
+    const ERA_YEARS: u32 = 400; // calendar repeats itself exactly every 400 years
 
-        let y = year;
+    const DAYS_IN_4_YEARS: u32 = 4 * Self::YEAR_DAYS + 1; // 1461
+    const DAYS_IN_100_YEARS: u32 = 25 * Self::DAYS_IN_4_YEARS - 1; // 36524
+    const DAYS_IN_400_YEARS: u32 = 4 * Self::DAYS_IN_100_YEARS + 1; // 146097
+    const ERA_DAYS: u32 = Self::DAYS_IN_400_YEARS;
+
+    const UNIX_EPOCH_DAY: isize = 719468;
+
+    pub const fn from_ymd(year: isize, month: u8, day: u8) -> Self {
+        // Source: https://howardhinnant.github.io/date_algorithms.html#days_from_civil
+
+        debug_assert!(month >= 1 && month <= 12, "month not in range [1, 12]");
+        debug_assert!(day >= 1 && day <= 31, "day not in range [1, 31]");
+        #[cfg(debug_assertions)]
+        match (year, month, day) {
+            (25252734927766554, 9, d) if d > 25 => panic!("date too large"),
+            (25252734927766554, m, _) if m > 9 => panic!("date too large"),
+            (y, ..) if y > 25252734927766554 => panic!("date too large"),
+            (-25252734927764585, 6, d) if d < 7 => panic!("date too small"),
+            (-25252734927764585, m, _) if m < 6 => panic!("date too small"),
+            (y, ..) if y < -25252734927764585 => panic!("date too small"),
+            _ => {}
+        }
+
+        let mut y = year;
         let m = month as isize;
         let d = day as isize;
 
-        let adjusted_year = y - if m <= 2 { 1 } else { 0 };
+        if m <= 2 {
+            y -= 1
+        }
 
-        let era = if adjusted_year >= 0 {
-            adjusted_year / 400
-        } else {
-            (adjusted_year - 399) / 400
-        };
+        let era: isize = y.div_euclid(Self::ERA_YEARS as isize);
+        let year_of_era = (y - era * Self::ERA_YEARS as isize) as u32;
+        debug_assert!(year_of_era < Self::ERA_YEARS, "year_of_era >= ERA_YEARS");
 
-        let year_of_era = adjusted_year - era * 400;
-        let month_part = if m > 2 { m - 3 } else { m + 9 };
-        let day_of_year = (153 * month_part + 2) / 5 + d - 1;
-        let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+        let day_of_year = ((153 * ((m + 9) % 12) + 2) / 5 + d - 1) as u32;
+        debug_assert!(day_of_year <= Self::YEAR_DAYS, "day_of_year > YEAR_DAYS");
 
-        let days_since_julian = era * 146097 + day_of_era;
+        let day_of_era =
+            year_of_era * Self::YEAR_DAYS + year_of_era / 4 - year_of_era / 100 + day_of_year;
+        debug_assert!(year_of_era < Self::ERA_YEARS, "year_of_era >= ERA_YEARS");
 
-        Self(days_since_julian - 719163)
+        let days = era * Self::ERA_DAYS as isize + (day_of_era as isize) - Self::UNIX_EPOCH_DAY;
+
+        Self(days)
     }
 
     #[inline]
@@ -39,34 +75,58 @@ impl Date {
         Self::from_ymd(year, 1, 1)
     }
 
-    pub const fn ymd(&self) -> (isize, usize, usize) {
-        // Source: https://howardhinnant.github.io/date_algorithms.html
+    pub const fn ymd(&self) -> (isize, u8, u8) {
+        // Source: https://howardhinnant.github.io/date_algorithms.html#civil_from_days
 
-        let julian_day = self.0 + 719163;
-        let shifted = julian_day + 32044;
+        debug_assert!(self.0 < isize::MAX - Self::UNIX_EPOCH_DAY, "date too large");
+        let julian_days = self.0 + Self::UNIX_EPOCH_DAY;
 
-        let era = (4 * shifted + 3) / 146097;
-        let day_of_era = shifted - (146097 * era) / 4;
-        let year_of_era = (4 * day_of_era + 3) / 1461;
-        let day_of_year = day_of_era - (1461 * year_of_era) / 4;
-        let month_part = (5 * day_of_year + 2) / 153;
+        let era = julian_days.div_euclid(Self::ERA_DAYS as isize);
+        let day_of_era = julian_days.rem_euclid(Self::ERA_DAYS as isize) as u32;
+        debug_assert!(day_of_era < Self::ERA_DAYS, "day_of_era >= ERA_DAYS");
 
-        let day = day_of_year - (153 * month_part + 2) / 5 + 1;
-        let month = (month_part + 3 - 1) % 12 + 1;
-        let year = 100 * era + year_of_era - 4800 + (month_part + 3) / 12;
+        let year_of_era = {
+            let leap_years = day_of_era / (Self::DAYS_IN_4_YEARS - 1); // adjustment for leap days according to julian calendar
+            let centuries = day_of_era / (Self::DAYS_IN_100_YEARS - 1); // except century years not exactly divisible by 400
+            let last_day = day_of_era / (Self::DAYS_IN_400_YEARS - 1); // but the first one should be included
+            (day_of_era - leap_years + centuries - last_day) / Self::YEAR_DAYS
+        };
+        debug_assert!(year_of_era < Self::ERA_YEARS, "year_of_era >= ERA_YEARS");
 
-        (year, month as usize, day as usize)
+        let mut year = year_of_era as isize + era * Self::ERA_YEARS as isize;
+        let day_of_year: u32 =
+            day_of_era - (Self::YEAR_DAYS * year_of_era + year_of_era / 4 - year_of_era / 100);
+        debug_assert!(day_of_year <= Self::YEAR_DAYS, "day_of_year > YEAR_DAYS");
+
+        let month_shifted: u32 = (5 * day_of_year + 2) / 153;
+        debug_assert!(month_shifted <= 11, "month_shifted > 11");
+
+        let day: u32 = day_of_year - (153 * month_shifted + 2) / 5 + 1;
+        debug_assert!(day >= 1 && day <= 31, "day not in range [1, 31]");
+
+        let month: u32 = if month_shifted < 10 {
+            month_shifted + 3
+        } else {
+            month_shifted - 9
+        };
+        debug_assert!(month >= 1 && month <= 12, "month not in range [1, 12]");
+
+        if month <= 2 {
+            year += 1;
+        }
+
+        (year, month as u8, day as u8)
     }
 
     /// Day of the month
     #[inline]
-    pub const fn day(&self) -> usize {
+    pub const fn day(&self) -> u8 {
         self.ymd().2
     }
 
     /// Month of the year
     #[inline]
-    pub const fn month(&self) -> usize {
+    pub const fn month(&self) -> u8 {
         self.ymd().1
     }
 
@@ -110,15 +170,20 @@ impl TryFrom<Date> for std::time::SystemTime {
     type Error = DateConversionError;
 
     fn try_from(value: Date) -> Result<Self, Self::Error> {
-        if value.0 > u64::MAX as isize / SECONDS_IN_DAY {
-            return Err(DateConversionError);
+        let relative = value.0 - Date::UNIX_EPOCH_DAY;
+        if relative >= 0 {
+            if relative > u64::MAX as isize / SECONDS_IN_DAY {
+                return Err(DateConversionError);
+            }
+            Ok(std::time::SystemTime::UNIX_EPOCH
+                + std::time::Duration::from_secs(relative as u64 * SECONDS_IN_DAY as u64))
+        } else {
+            if relative < u64::MAX as isize / SECONDS_IN_DAY {
+                return Err(DateConversionError);
+            }
+            Ok(std::time::SystemTime::UNIX_EPOCH
+                - std::time::Duration::from_secs(relative as u64 * SECONDS_IN_DAY as u64))
         }
-        assert!(
-            value.0 <= u64::MAX as isize / SECONDS_IN_DAY,
-            "date too large"
-        );
-        Ok(std::time::SystemTime::UNIX_EPOCH
-            + std::time::Duration::from_secs(value.0 as u64 * SECONDS_IN_DAY as u64))
     }
 }
 
@@ -328,7 +393,7 @@ impl_ext_for_t!(if "time" time::PrimitiveDateTime);
 /// Error returned when conversion to/from another date format can't be
 /// performed because one has larger span than the other and conversion would
 /// cause an overflow.
-/// 
+///
 /// In most practical use cases this won't happen because dates that are stored
 /// in holidays table can be reasonably converted to most time libraries.
 #[derive(Debug, PartialEq, Eq)]
@@ -339,7 +404,44 @@ crate::error::error_msg!(DateConversionError, "Date is too large for conversion"
 mod tests {
     use super::*;
     use crate::Country;
-    use std::time::SystemTime;
+    use std::{hint::black_box, time::SystemTime};
+
+    fn round_trip(y: isize, m: u8, d: u8) {
+        let date = black_box(Date::from_ymd(y, m, d));
+        let (y_out, m_out, d_out) = date.ymd();
+        assert_eq!(y, y_out);
+        assert_eq!(m, m_out);
+        assert_eq!(d, d_out);
+    }
+
+    #[test]
+    fn ymd_to_days() {
+        // test ymd is inverse of from_ymd
+        round_trip(2025, 5, 20);
+        round_trip(4423, 1, 18);
+        round_trip(-2344, 2, 6);
+
+        // days are computed using: https://aa.usno.navy.mil/data/JulianDate
+        // with 2440588 offset from their
+
+        println!("{:?}", Date(-2440588));
+
+        // test from_ymd works:
+        let date = Date::from_ymd(1970, 1, 1);
+        assert_eq!(date.0, 0);
+
+        let date = Date::from_ymd(1970, 2, 1);
+        assert_eq!(date.0, 31);
+
+        let date = Date::from_ymd(2025, 6, 12);
+        assert_eq!(date.0, 20251);
+
+        let date = Date::from_ymd(1602, 10, 12);
+        assert_eq!(date.0, -134125);
+
+        let date = Date::from_ymd(6453, 3, 15);
+        assert_eq!(date.0, 1637456);
+    }
 
     #[test]
     fn date_ext_type_interface() {
