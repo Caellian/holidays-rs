@@ -15,7 +15,7 @@ use std::time::Duration;
 #[repr(transparent)]
 pub struct Date(
     /// Number of days since 1st of January, 1970. (UNIX epoch).
-    pub(crate) isize,
+    pub(crate) i64,
 );
 
 #[allow(missing_docs)]
@@ -28,9 +28,9 @@ impl Date {
     const DAYS_IN_400_YEARS: u32 = 4 * Self::DAYS_IN_100_YEARS + 1; // 146097
     const ERA_DAYS: u32 = Self::DAYS_IN_400_YEARS;
 
-    const UNIX_EPOCH_DAY: isize = 719468;
+    const UNIX_EPOCH_DAY: i64 = 719468;
 
-    pub const fn from_ymd(year: isize, month: u8, day: u8) -> Self {
+    pub const fn from_ymd(year: i64, month: u8, day: u8) -> Self {
         // Source: https://howardhinnant.github.io/date_algorithms.html#days_from_civil
 
         debug_assert!(month >= 1 && month <= 12, "month not in range [1, 12]");
@@ -47,15 +47,15 @@ impl Date {
         }
 
         let mut y = year;
-        let m = month as isize;
-        let d = day as isize;
+        let m = month as i64;
+        let d = day as i64;
 
         if m <= 2 {
             y -= 1
         }
 
-        let era: isize = y.div_euclid(Self::ERA_YEARS as isize);
-        let year_of_era = (y - era * Self::ERA_YEARS as isize) as u32;
+        let era = y.div_euclid(Self::ERA_YEARS as i64);
+        let year_of_era = (y - era * Self::ERA_YEARS as i64) as u32;
         debug_assert!(year_of_era < Self::ERA_YEARS, "year_of_era >= ERA_YEARS");
 
         let day_of_year = ((153 * ((m + 9) % 12) + 2) / 5 + d - 1) as u32;
@@ -65,24 +65,24 @@ impl Date {
             year_of_era * Self::YEAR_DAYS + year_of_era / 4 - year_of_era / 100 + day_of_year;
         debug_assert!(year_of_era < Self::ERA_YEARS, "year_of_era >= ERA_YEARS");
 
-        let days = era * Self::ERA_DAYS as isize + (day_of_era as isize) - Self::UNIX_EPOCH_DAY;
+        let days = era * Self::ERA_DAYS as i64 + (day_of_era as i64) - Self::UNIX_EPOCH_DAY;
 
         Self(days)
     }
 
     #[inline]
-    pub const fn from_year(year: isize) -> Self {
+    pub const fn from_year(year: i64) -> Self {
         Self::from_ymd(year, 1, 1)
     }
 
-    pub const fn ymd(&self) -> (isize, u8, u8) {
+    pub const fn ymd(&self) -> (i64, u8, u8) {
         // Source: https://howardhinnant.github.io/date_algorithms.html#civil_from_days
 
-        debug_assert!(self.0 < isize::MAX - Self::UNIX_EPOCH_DAY, "date too large");
+        debug_assert!(self.0 < i64::MAX - Self::UNIX_EPOCH_DAY, "date too large");
         let julian_days = self.0 + Self::UNIX_EPOCH_DAY;
 
-        let era = julian_days.div_euclid(Self::ERA_DAYS as isize);
-        let day_of_era = julian_days.rem_euclid(Self::ERA_DAYS as isize) as u32;
+        let era = julian_days.div_euclid(Self::ERA_DAYS as i64);
+        let day_of_era = julian_days.rem_euclid(Self::ERA_DAYS as i64) as u32;
         debug_assert!(day_of_era < Self::ERA_DAYS, "day_of_era >= ERA_DAYS");
 
         let year_of_era = {
@@ -93,7 +93,7 @@ impl Date {
         };
         debug_assert!(year_of_era < Self::ERA_YEARS, "year_of_era >= ERA_YEARS");
 
-        let mut year = year_of_era as isize + era * Self::ERA_YEARS as isize;
+        let mut year = year_of_era as i64 + era * Self::ERA_YEARS as i64;
         let day_of_year: u32 =
             day_of_era - (Self::YEAR_DAYS * year_of_era + year_of_era / 4 - year_of_era / 100);
         debug_assert!(day_of_year <= Self::YEAR_DAYS, "day_of_year > YEAR_DAYS");
@@ -132,7 +132,7 @@ impl Date {
 
     /// Year
     #[inline]
-    pub const fn year(&self) -> isize {
+    pub const fn year(&self) -> i64 {
         self.ymd().0
     }
 
@@ -157,32 +157,28 @@ impl Date {
     }
 }
 
-/// An `isize` value is treated like a year in Julian calendar.
-impl From<isize> for Date {
-    fn from(value: isize) -> Self {
+/// An `i64` value is treated like a year in Julian calendar.
+impl From<i64> for Date {
+    fn from(value: i64) -> Self {
         Date::from_year(value)
     }
 }
 
-const SECONDS_IN_DAY: isize = 86400;
+const SECONDS_IN_DAY: i64 = 86400;
 
 impl TryFrom<Date> for std::time::SystemTime {
     type Error = DateConversionError;
 
     fn try_from(value: Date) -> Result<Self, Self::Error> {
-        let relative = value.0 - Date::UNIX_EPOCH_DAY;
-        if relative >= 0 {
-            if relative > u64::MAX as isize / SECONDS_IN_DAY {
-                return Err(DateConversionError);
-            }
-            Ok(std::time::SystemTime::UNIX_EPOCH
-                + std::time::Duration::from_secs(relative as u64 * SECONDS_IN_DAY as u64))
+        let mul_res = value
+            .0
+            .checked_mul(SECONDS_IN_DAY)
+            .ok_or(DateConversionError)?;
+
+        if value.0 >= 0 {
+            Ok(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(mul_res as u64))
         } else {
-            if relative < u64::MAX as isize / SECONDS_IN_DAY {
-                return Err(DateConversionError);
-            }
-            Ok(std::time::SystemTime::UNIX_EPOCH
-                - std::time::Duration::from_secs(relative as u64 * SECONDS_IN_DAY as u64))
+            Ok(std::time::SystemTime::UNIX_EPOCH - std::time::Duration::from_secs(-mul_res as u64))
         }
     }
 }
@@ -190,8 +186,8 @@ impl TryFrom<Date> for std::time::SystemTime {
 impl From<std::time::SystemTime> for Date {
     fn from(value: std::time::SystemTime) -> Self {
         let days = match value.duration_since(std::time::SystemTime::UNIX_EPOCH) {
-            Ok(duration) => duration.as_secs() as isize / SECONDS_IN_DAY,
-            Err(err) => -(err.duration().as_secs() as isize / SECONDS_IN_DAY),
+            Ok(duration) => (duration.as_secs() as i128 / SECONDS_IN_DAY as i128) as i64,
+            Err(err) => (-(err.duration().as_secs() as i128 / SECONDS_IN_DAY as i128)) as i64,
         };
 
         Date(days)
@@ -406,7 +402,7 @@ mod tests {
     use crate::Country;
     use std::{hint::black_box, time::SystemTime};
 
-    fn round_trip(y: isize, m: u8, d: u8) {
+    fn round_trip(y: i64, m: u8, d: u8) {
         let date = black_box(Date::from_ymd(y, m, d));
         let (y_out, m_out, d_out) = date.ymd();
         assert_eq!(y, y_out);

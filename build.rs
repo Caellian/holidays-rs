@@ -11,8 +11,8 @@ use std::{
 
 // Make sure to also update ./gen.py years range
 // These numbers should be more conservative to reduce compile time
-const DEFAULT_MIN_YEAR: isize = 2000;
-const DEFAULT_MAX_YEAR: isize = 2035;
+const DEFAULT_MIN_YEAR: i64 = 2000;
+const DEFAULT_MAX_YEAR: i64 = 2035;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct Country {
@@ -34,25 +34,25 @@ impl Display for Country {
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct Date {
-    year: i16,
+    year: i64,
     month: u8,
     day: u8,
-    day_index: isize,
+    day_index: i64,
 }
 
-pub const fn ymd_as_isize(mut y: isize, m: isize, d: isize) -> isize {
+pub const fn ymd_as_isize(mut y: i64, m: i64, d: i64) -> i64 {
     // Source: https://howardhinnant.github.io/date_algorithms.html#days_from_civil
     if m <= 2 {
         y -= 1
     }
 
-    let era: isize = y.div_euclid(400);
+    let era = y.div_euclid(400);
     let year_of_era = (y - era * 400) as u32;
     let day_of_year = ((153 * ((m + 9) % 12) + 2) / 5 + d - 1) as u32;
     let day_of_era =
         year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
 
-    era * 146097 + (day_of_era as isize) - 719468
+    era * 146097 + (day_of_era as i64) - 719468
 }
 
 impl Date {}
@@ -68,7 +68,7 @@ impl FromStr for Date {
             year,
             month,
             day,
-            day_index: ymd_as_isize(year as isize, month as isize, day as isize),
+            day_index: ymd_as_isize(year, month as i64, day as i64),
         })
     }
 }
@@ -180,8 +180,8 @@ fn gen_data_tables<W: Write>(out: &mut W, holidays: &[Holiday]) -> std::io::Resu
 
     let min_year = *year_lookup.first_entry().unwrap().key();
     let max_year = *year_lookup.last_entry().unwrap().key();
-    writeln!(out, "pub(crate) const DATA_MIN_YEAR: isize = {min_year};")?;
-    writeln!(out, "pub(crate) const DATA_MAX_YEAR: isize = {max_year};")?;
+    writeln!(out, "pub(crate) const DATA_MIN_YEAR: i64 = {min_year};")?;
+    writeln!(out, "pub(crate) const DATA_MAX_YEAR: i64 = {max_year};")?;
 
     out.write_all(b"pub(crate) static YEAR_JUMP_TABLE: &[usize] = &[")?;
     let mut index = 0;
@@ -264,10 +264,10 @@ fn main() {
 
     let min_req_year = std::env::var("HOLIDAYS_MIN_YEAR")
         .map(|it| it.parse().unwrap_or(DEFAULT_MIN_YEAR))
-        .unwrap_or(DEFAULT_MIN_YEAR) as i16;
+        .unwrap_or(DEFAULT_MIN_YEAR) as i64;
     let max_req_year = std::env::var("HOLIDAYS_MAX_YEAR")
         .map(|it| it.parse().unwrap_or(DEFAULT_MAX_YEAR))
-        .unwrap_or(DEFAULT_MAX_YEAR) as i16;
+        .unwrap_or(DEFAULT_MAX_YEAR) as i64;
 
     let holidays_path = root.join("holidays.csv");
     let holidays: Vec<Holiday> = csv::ReaderBuilder::new()

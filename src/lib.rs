@@ -35,9 +35,10 @@
 //! ).collect();
 //!
 //! for holiday in holidays {
+//!     // in real uses, a crate like chrono or time should be used
 //!     let time: std::time::SystemTime = holiday.date().unwrap();
 //! #   let time = holiday.date::<Date>().unwrap();
-//!     println!("{} on {:?}", holiday.name, time); // pretending time implements Debug
+//!     println!("{} on {:?}", holiday.name, time); // pretending SystemTime implements Debug
 //! }
 //! ```
 //!
@@ -128,15 +129,15 @@ impl Holiday {
 /// # Type Parameters
 /// - `CountryIter`: An [iterable] collection of `Country` values.
 /// - `DateLike`: A type that can be converted into a date. Can be any of:
-///   - `isize` representing Julian calendar year
-///   - [`SystemTime`]
+///   - an `isize` representing a Gregorian calendar year,
+///   - a [`SystemTime`],
 #[cfg_attr(
     feature = "chrono",
-    doc = "  - [`chrono::NaiveDate`]\n  - [`chrono::DateTime<Tz>`]"
+    doc = "  - a [`chrono::NaiveDate`] or [`chrono::DateTime<Tz>`],"
 )]
 #[cfg_attr(
     feature = "time",
-    doc = "  - [`time::Date`]\n  - [`time::OffsetDateTime`]\n  - [`time::PrimitiveDateTime`]"
+    doc = "  - a [`time::Date`], [`time::OffsetDateTime`], or [`time::PrimitiveDateTime`],"
 )]
 /// - `DateRange`: A type implementing [`RangeBounds<DateLike>`], like
 ///   [`std::ops::Range`] or [`std::ops::RangeInclusive`].
@@ -146,38 +147,81 @@ impl Holiday {
 /// 
 /// # Examples
 ///
-/// To query information about a single country and single date, do dis:
+/// Query holidays for a single country and a single date:
 /// ```
 /// # use holidays::internal::Date;
 /// use holidays::Country;
 ///
-/// let mut holidays = holidays::get_holidays(Country::US, Date::from_ymd(2025, 7, 4));
+/// let mut holidays = holidays::get_holidays(
+///   Country::US,
+///   Date::from_ymd(2025, 7, 4)
+/// );
 /// let holiday = holidays.next().expect("missing data");
 /// 
 /// assert_eq!(holiday.name, "Independence Day");
 /// ```
 /// 
-/// Year ranges can be used to query holidays over a lot o' years:
+/// Query holidays for a single country across a range of years:
 /// ```
 /// use holidays::Country;
 ///
-/// let mut holidays = holidays::get_holidays(Country::JP, 2025..=2026);
+/// let mut holidays = holidays::get_holidays(
+///   Country::JP,
+///   2025..=2026
+/// );
 /// let observed_holidays = holidays.count();
 /// 
 /// assert_eq!(observed_holidays, 19);
 /// ```
 /// 
-/// Multiple countries can be queried by providing an iterable in place of a single country:
+/// Query holidays over a specific range of dates:
 /// ```
 /// # use holidays::internal::Date;
 /// use holidays::Country;
 ///
-/// let mut holidays = holidays::get_holidays(&[Country::JP, Country::US], Date::from_ymd(2025, 9, 23));
+/// let start = Date::from_ymd(2025, 12, 20);
+/// let end = Date::from_ymd(2026, 1, 5);
+///
+/// let mut holidays = holidays::get_holidays(
+///   Country::FR,
+///   start..=end
+/// );
+///
+/// let names: Vec<_> = holidays.map(|h| h.name).collect();
+///
+/// assert!(names.contains(&"Christmas Day"));
+/// assert!(names.contains(&"New Year's Day"));
+/// ```
+/// 
+/// Query holidays for multiple countries on a specific date:
+/// ```
+/// # use holidays::internal::Date;
+/// use holidays::Country;
+///
+/// let mut holidays = holidays::get_holidays(
+///   &[Country::JP, Country::US], // can be any IntoIterator<Item = Into<Country>>
+///   Date::from_ymd(2025, 9, 23)
+/// );
 /// let holiday = holidays.next().unwrap();
 /// 
 /// assert_eq!(holiday.name, "Autumnal Equinox");
-/// // Autumnal Equinox isn't observed in US.
+/// // Autumnal Equinox wasn't observed in US.
 /// assert_eq!(holidays.next(), None);
+/// ```
+/// 
+/// Use [`Any`] to include all countries or all dates without filtering:
+/// ```
+/// # use holidays::internal::Date;
+/// use holidays::Any;
+///
+/// let holidays = holidays::get_holidays(
+///   Any,
+///   Date::from_ymd(2025, 1, 1)
+/// );
+/// let n = holidays.count();
+/// 
+/// println!("{n} countries celebrated New Year's Day!");
+/// # assert!(n >= 93); // It's 93 for now but data isn't complete
 /// ```
 /// 
 /// [iterable]: std::iter::IntoIterator
@@ -196,12 +240,88 @@ where
 {
     let country_query = countries.into().into_query();
     let date_query = date.into().into_query();
-    country_query.and(date_query).run()
+    country_query.and(date_query).into_iter()
 }
 
-/// Returns `true` if any holidays are observed in specified countries and date.
+/// Returns `true` if any holidays are observed in the specified countries
+/// and date selection.
 ///
-/// See [`get_holidays`] function for details on supported arguments.
+/// This function accepts the same flexible input types as [`get_holidays`],
+/// but instead of returning an iterator, it simply checks whether at least
+/// one matching holiday exists.
+///
+/// # Parameters
+/// - `countries`: A value that represents a country selection. It can be:
+///   - [`Any`] to check across all countries,
+///   - [`Option`] (treated as [`Any`] if `None`),
+///   - a single [`Country`], or
+///   - any [iterable] container of [`Country`]s (an array, slice, [`Vec`], etc.).
+/// - `date`: A value that represents a date range. It can be:
+///   - [`Any`] to check across all dates,
+///   - [`Option`] (treated as [`Any`] if `None`),
+///   - a single date, or
+///   - a [range] of dates.
+///
+/// # Type Parameters
+/// - `CountryIter`: An [iterable] collection of `Country` values.
+/// - `DateLike`: A type that can be converted into a date. Can be:
+///   - an `isize` representing a Gregorian calendar year,
+///   - a [`SystemTime`],
+#[cfg_attr(
+    feature = "chrono",
+    doc = "  - a [`chrono::NaiveDate`] or [`chrono::DateTime<Tz>`],"
+)]
+#[cfg_attr(
+    feature = "time",
+    doc = "  - a [`time::Date`], [`time::OffsetDateTime`], or [`time::PrimitiveDateTime`],"
+)]
+/// - `DateRange`: A type implementing [`RangeBounds<DateLike>`], such as
+///   [`std::ops::Range`] or [`std::ops::RangeInclusive`].
+///
+/// # Examples
+///
+/// Check if a specific day is a holiday in a given country:
+/// ```
+/// # use holidays::internal::Date;
+/// use holidays::{Country, is_holiday};
+///
+/// assert!(is_holiday(Country::US, Date::from_ymd(2025, 7, 4)));
+/// assert!(!is_holiday(Country::US, Date::from_ymd(2025, 7, 5)));
+/// ```
+///
+/// Check for any holidays in multiple countries:
+/// ```
+/// # use holidays::internal::Date;
+/// use holidays::{Country, is_holiday};
+///
+/// let countries = &[Country::US, Country::JP];
+/// let date = Date::from_ymd(2025, 9, 23);
+///
+/// assert!(is_holiday(countries, date)); // Autumnal Equinox in JP
+/// ```
+///
+/// Check for holidays within a date range:
+/// ```
+/// # use holidays::internal::Date;
+/// use holidays::{Country, is_holiday};
+///
+/// let range = Date::from_ymd(2025, 12, 24)..=Date::from_ymd(2025, 12, 26);
+///
+/// assert!(is_holiday(Country::DE, range)); // Christmas observed
+/// ```
+///
+/// Use [`Any`] to check if *any* country observes a holiday on a given date:
+/// ```
+/// # use holidays::internal::Date;
+/// # use holidays::{Any, is_holiday};
+///
+/// assert!(is_holiday(Any, Date::from_ymd(2025, 1, 1)));
+/// ```
+///
+/// [iterable]: std::iter::IntoIterator
+/// [`SystemTime`]: std::time::SystemTime
+/// [range]: std::ops::RangeBounds
+/// [`RangeBounds<DateLike>`]: std::ops::RangeBounds
 #[inline]
 pub fn is_holiday<CountryIter, DateLike, DateRange>(
     countries: impl Into<CountrySelection<CountryIter>>,
@@ -262,4 +382,20 @@ pub mod error {
 #[doc(hidden)]
 pub mod internal {
     pub use crate::date::Date;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_name() {
+        use crate::internal::Date;
+        use crate::Any;
+
+        let holidays = crate::get_holidays(Any, Date::from_ymd(2025, 1, 1));
+        let o = holidays.count();
+
+        println!("{o} countries celebrated New Year!");
+    }
 }

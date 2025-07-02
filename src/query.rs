@@ -9,7 +9,7 @@ pub(crate) struct Query {
 
 impl Query {
     pub const EMPTY: Query = Query {
-        countries: CountrySet::new(),
+        countries: CountrySet::all(),
         date_filter: None,
     };
 
@@ -40,7 +40,7 @@ impl Query {
     }
 
     #[allow(dead_code)]
-    pub const fn year(value: isize) -> Self {
+    pub const fn year(value: i64) -> Self {
         Query {
             countries: CountrySet::new(),
             date_filter: Some(DateQuery::year(value)),
@@ -48,7 +48,7 @@ impl Query {
     }
 
     #[allow(dead_code)]
-    pub fn year_range<R: std::ops::RangeBounds<isize>>(value: R) -> Self {
+    pub fn year_range<R: std::ops::RangeBounds<i64>>(value: R) -> Self {
         Query {
             countries: CountrySet::new(),
             date_filter: DateQuery::year_range(value),
@@ -83,8 +83,33 @@ impl Query {
         };
         self
     }
+}
 
-    pub fn run(&self) -> Iter {
+impl std::ops::BitAnd for Query {
+    type Output = Self;
+
+    fn bitand(mut self, rhs: Self) -> Self::Output {
+        self &= rhs;
+        self
+    }
+}
+impl std::ops::BitAndAssign for Query {
+    fn bitand_assign(&mut self, rhs: Self) {
+        self.countries &= rhs.countries;
+        self.date_filter = match (self.date_filter, rhs.date_filter) {
+            (None, Some(it)) => Some(it),
+            (Some(it), None) => Some(it),
+            (Some(a), Some(b)) => Some(a & b),
+            (None, None) => None,
+        };
+    }
+}
+
+impl IntoIterator for Query {
+    type Item = <Iter as Iterator>::Item;
+    type IntoIter = Iter;
+    
+    fn into_iter(self) -> Self::IntoIter {
         Iter(match self.date_filter {
             Some(empty) if empty.is_empty() => IterImpl::Empty,
             Some(DateQuery::Exact(date)) => IterImpl::Exact {
@@ -100,31 +125,11 @@ impl Query {
     }
 }
 
-impl std::ops::BitAnd for Query {
-    type Output = Self;
-
-    fn bitand(mut self, rhs: Self) -> Self::Output {
-        self &= rhs;
-        self
-    }
-}
-impl std::ops::BitAndAssign for Query {
-    fn bitand_assign(&mut self, rhs: Self) {
-        self.countries |= rhs.countries;
-        self.date_filter = match (self.date_filter, rhs.date_filter) {
-            (None, Some(it)) => Some(it),
-            (Some(it), None) => Some(it),
-            (Some(a), Some(b)) => Some(a & b),
-            (None, None) => None,
-        };
-    }
-}
-
 #[derive(Clone, Copy)]
 enum DateQuery {
+    Exact(Date),
     FromDate(Date),
     ToDate(Date),
-    Exact(Date),
     DateRange(Date, Date),
 }
 
@@ -133,7 +138,7 @@ impl DateQuery {
 
     #[allow(dead_code)]
     #[inline(always)]
-    const fn year(value: isize) -> Self {
+    const fn year(value: i64) -> Self {
         DateQuery::DateRange(Date::from_year(value), Date::from_year(value + 1))
     }
 
@@ -141,7 +146,7 @@ impl DateQuery {
     #[inline(always)]
     fn year_range<R>(value: R) -> Option<Self>
     where
-        R: std::ops::RangeBounds<isize>,
+        R: std::ops::RangeBounds<i64>,
     {
         let start = match value.start_bound() {
             std::ops::Bound::Included(it) => Date::from_year(*it),
@@ -461,7 +466,7 @@ pub mod selection {
         I: IntoIterator,
         I::Item: Into<Country>,
     {
-        None,
+        All,
         One(Country),
         Many(I),
     }
@@ -473,7 +478,7 @@ pub mod selection {
     {
         pub(crate) fn into_query(self) -> Query {
             match self {
-                CountrySelection::None => Query::EMPTY,
+                CountrySelection::All => Query::EMPTY,
                 CountrySelection::One(one) => Query::country(one),
                 CountrySelection::Many(many) => Query::countries(many),
             }
@@ -481,7 +486,7 @@ pub mod selection {
 
         pub(crate) fn bounds(self) -> BoundsResult<I::IntoIter> {
             BoundsResult(match self {
-                CountrySelection::None => BoundsResultImpl::Empty,
+                CountrySelection::All => BoundsResultImpl::Empty,
                 CountrySelection::One(country) => BoundsResultImpl::One(country),
                 CountrySelection::Many(countries) => BoundsResultImpl::Many(countries.into_iter()),
             })
@@ -490,7 +495,7 @@ pub mod selection {
 
     impl From<Any> for CountrySelection<std::iter::Empty<Country>> {
         fn from(_: Any) -> Self {
-            CountrySelection::None
+            CountrySelection::All
         }
     }
 

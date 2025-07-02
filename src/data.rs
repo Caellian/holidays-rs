@@ -6,7 +6,7 @@ use crate::Holiday;
 
 include!(concat!(env!("OUT_DIR"), "/holiday_data.rs"));
 
-pub(crate) fn year_to_index(year: isize) -> Option<usize> {
+pub(crate) fn year_to_index(year: i64) -> Option<usize> {
     if year < DATA_MIN_YEAR {
         return None;
     }

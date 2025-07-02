@@ -96,6 +96,13 @@ impl CountrySet {
         }
     }
 
+    /// Create a full set.
+    pub const fn all() -> Self {
+        CountrySet {
+            words: [u64::MAX; N_WORDS],
+        }
+    }
+
     /// Insert one country.
     #[inline]
     pub const fn insert(&mut self, country: Country) {
