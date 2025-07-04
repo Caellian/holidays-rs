@@ -157,7 +157,7 @@ impl Date {
     }
 }
 
-/// An `i64` value is treated like a year in Julian calendar.
+/// An `i64` value is treated like a year.
 impl From<i64> for Date {
     fn from(value: i64) -> Self {
         Date::from_year(value)
@@ -182,7 +182,6 @@ impl TryFrom<Date> for std::time::SystemTime {
         }
     }
 }
-
 impl From<std::time::SystemTime> for Date {
     fn from(value: std::time::SystemTime) -> Self {
         let days = match value.duration_since(std::time::SystemTime::UNIX_EPOCH) {
@@ -207,48 +206,11 @@ impl TryFrom<Date> for chrono::NaiveDate {
     }
 }
 #[cfg(feature = "chrono")]
-impl TryFrom<Date> for chrono::DateTime<chrono::Utc> {
-    type Error = DateConversionError;
-
-    fn try_from(value: Date) -> Result<Self, Self::Error> {
-        let naive = chrono::NaiveDate::try_from(value)?
-            .and_hms_opt(0, 0, 0)
-            .ok_or(DateConversionError)?;
-
-        Ok(chrono::TimeZone::from_utc_datetime(&chrono::Utc, &naive))
-    }
-}
-#[cfg(feature = "chrono")]
-impl TryFrom<Date> for chrono::DateTime<chrono::Local> {
-    type Error = DateConversionError;
-
-    #[inline]
-    fn try_from(value: Date) -> Result<Self, Self::Error> {
-        let dt_utc = chrono::DateTime::<chrono::Utc>::try_from(value)?;
-        Ok(dt_utc.with_timezone(&chrono::Local))
-    }
-}
-
-#[cfg(feature = "chrono")]
 impl From<chrono::NaiveDate> for Date {
     fn from(value: chrono::NaiveDate) -> Self {
         let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
         let days = value.signed_duration_since(epoch).num_days();
         Date(days as isize)
-    }
-}
-#[cfg(feature = "chrono")]
-impl From<chrono::DateTime<chrono::Utc>> for Date {
-    #[inline]
-    fn from(value: chrono::DateTime<chrono::Utc>) -> Self {
-        Date::from(value.date_naive())
-    }
-}
-#[cfg(feature = "chrono")]
-impl From<chrono::DateTime<chrono::Local>> for Date {
-    #[inline]
-    fn from(value: chrono::DateTime<chrono::Local>) -> Self {
-        Date::from(value.naive_local().date())
     }
 }
 
@@ -267,49 +229,12 @@ impl TryFrom<Date> for time::Date {
         Ok(epoch.saturating_add(time::Duration::days(value.0 as i64)))
     }
 }
-
-#[cfg(feature = "time")]
-impl TryFrom<Date> for time::OffsetDateTime {
-    type Error = DateConversionError;
-
-    fn try_from(value: Date) -> Result<Self, Self::Error> {
-        let date = time::Date::try_from(value)?;
-        let date = date.with_hms(0, 0, 0).unwrap();
-        Ok(date.assume_utc())
-    }
-}
-
-#[cfg(feature = "time")]
-impl TryFrom<Date> for time::PrimitiveDateTime {
-    type Error = DateConversionError;
-
-    fn try_from(value: Date) -> Result<Self, Self::Error> {
-        let date = time::Date::try_from(value)?;
-        let date = date.with_hms(0, 0, 0).unwrap();
-        Ok(date)
-    }
-}
-
 #[cfg(feature = "time")]
 impl From<time::Date> for Date {
     fn from(value: time::Date) -> Self {
         let epoch = time::Date::from_calendar_date(1970, time::Month::January, 1).unwrap();
         let days = (value - epoch).whole_days();
         Date(days as isize)
-    }
-}
-
-#[cfg(feature = "time")]
-impl From<time::OffsetDateTime> for Date {
-    fn from(value: time::OffsetDateTime) -> Self {
-        Date::from(value.date())
-    }
-}
-
-#[cfg(feature = "time")]
-impl From<time::PrimitiveDateTime> for Date {
-    fn from(value: time::PrimitiveDateTime) -> Self {
-        Date::from(value.date())
     }
 }
 
